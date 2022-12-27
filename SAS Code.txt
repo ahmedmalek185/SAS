@@ -1,0 +1,124 @@
+%let path=/home/u62734652/EPG1V2/data/; 
+libname tsa "/home/u62734652/EPG1V2/data/"; 
+
+options validvarname=v7; 
+
+/* Import the raw data file TSAClaims2002_2017.csv. */
+proc import datafile="&path/TSAClaims2002_2017.csv" 
+	dbms=csv out=tsa.ClaimsImport 
+	replace; 
+	guessingrows=max; 
+run;
+
+/* Entirely duplicated records need to be removed from the data set. */
+proc sort data=tsa.ClaimsImport 
+	out=tsa.claims_duplRem
+	nodupkey;
+ 	by _all_;
+run;
+
+/* All missing and "-" values in the columns Claim_Type, Claim_Site, and Disposition must be changed to Unknown. */
+data tsa.claimsunknown;
+	set tsa.claims_duplRem;
+	if Claim_Type in ("","-") then Claim_Type="Unknown";
+	if Claim_Site in ("","-") then Claim_Site="Unknown";
+	if Disposition in ("","-") then Disposition='Unknown';
+run;
+
+
+/* All StateName values should be in the proper case. */
+/* All State values should be in uppercase. */
+data tsa.claimsproper;
+	set tsa.claimsunknown;
+	StateName = PROPCASE (Statename);
+	State = UPCASE (State);
+run;
+
+/* You create a new column named Date_Issues with a value of Needs Review to indicate that a row has a date issue. */
+data tsa.claimsdissues;
+	set tsa.claimsproper;
+ 	if ( Incident_Date = "" or
+ 		Date_Received = "" or
+ 		year(Incident_Date) < 2002 or 
+ 		year(Incident_Date) > 2017 or
+ 		year(Date_Received) < 2002 or
+ 		year(Date_Received) > 2017 or
+ 		Incident_Date>Date_Received) then Date_Issues = "Needs Review";
+run;
+
+/* Remove the County and City columns. */
+data tsa.claimsremove;
+	set tsa.claimsdissues;
+	drop County City;
+run;
+
+/* Currency should be permanently formatted with a dollar sign and include two decimal points. */
+data tsa.claimscformat;
+	set tsa.claimsremove;
+	format Close_Amount Dollar10.2;
+run;
+
+/* All dates should be permanently formatted in the style 01JAN2000. */
+data tsa.claimsdformat;
+	set tsa.claimscformat;
+	format Date_Received Incident_Date Date9.;
+run;
+
+/* Permanent labels should be assigned columns by replacing the underscores with a space. */
+data tsa.claimslabels;
+	set tsa.claimsdformat;
+	label 
+	Claim_Number = "Claim Number"
+	Date_Received = "Date Received"
+	Incident_Date = "Incident Date"
+	Airport_Code = "Airport Code"
+	Airport_Name = "Airport Name"
+	Claim_Type = "Claim Type"
+	Claim_Site = "Claim Site"
+	Item_Category = "Item Category"
+	Close_Amount = "Close Amount"
+	Date_Issues = "Date Issues";
+run;
+
+/* Final data should be sorted in ascending order by Incident_Date. */
+/* The final report needs to exclude all rows with date issues in the analysis  */
+/* The final data should be in the permanent library TSA, and the data set should be named claims_cleaned. */
+proc sort data=tsa.claimslabels out=tsa.claims_cleaned;
+	by Incident_Date;
+run;
+
+/* The final report needs to exclude all rows with date issues in the analysis  */
+/* 1.How many date issues are in the overall data? */
+proc freq data=tsa.claims_cleaned;
+	tables Date_Issues;
+run;
+
+/* 2.How many claims per year of Incident_Date are in the overall data? Be sure to include a plot. */
+ods graphics on; 
+title "Overall Claims by Year"; 
+proc freq data=tsa.claims_cleaned;
+ 	tables Incident_Date / plots=freqplot;
+ 	format Incident_Date year4.;
+ 	where Date_Issues is null;
+run;
+
+/* 3.Lastly, dynamically input a specific state value and answer the following: */
+/* Selected state: New York */
+/* a/b/c.What are the frequency values for Claim_Type,Claim_Site, and desposition for the selected state? */
+ods graphics on; 
+title"Claims by City:New York";
+%let StateName=New York;
+proc freq data=tsa.claims_cleaned;
+	tables Claim_Type Claim_Site Disposition;
+ 	where StateName="&StateName" and 
+ 	Date_Issues is null;
+run;
+/* d.What is the mean, minimum, maximum, and sum of Close_Amount for the selected state? Round to the nearest integer. */
+ods graphics on; 
+title"Means by City:New York";
+%let StateName=New York;
+proc means data=tsa.claims_cleaned mean min max sum
+ 	maxdec=0;
+ 	var Close_Amount;
+ 	where StateName="&StateName";
+run;
